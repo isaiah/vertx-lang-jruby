@@ -201,7 +201,7 @@
                 <processor>io.vertx.docgen.DocGenProcessor</processor>
               </processors>
               <optionMap>
-                <generators>ruby</generators>
+                <generators>jruby</generators>
                 <outputDirectory>${project.basedir}/src/main</outputDirectory>
                 <docgen.output>${asciidoc.dir}</docgen.output>
               </optionMap>
@@ -296,14 +296,14 @@
         <artifactId>build-helper-maven-plugin</artifactId>
         <executions>
           <execution>
-            <id>add-ruby-source</id>
+            <id>add-jruby-source</id>
             <phase>prepare-package</phase>
             <goals>
               <goal>add-source</goal>
             </goals>
             <configuration>
               <sources>
-                <source>${basedir}/src/main/ruby</source>
+                <source>${basedir}/src/main/java</source>
               </sources>
             </configuration>
           </execution>
