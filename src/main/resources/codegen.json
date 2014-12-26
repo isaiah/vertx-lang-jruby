@@ -1,0 +1,8 @@
+{
+  "name": "Ruby",
+  "generators": [ {
+    "kind": "class",
+    "fileName": "'ruby/' + fqn.replace('io.vertx', 'io.vertx.ruby').replace('.', '/').replaceAll('([a-z])([A-Z])', '$1_$2').toLowerCase() + '.rb'",
+    "templateFileName": "vertx-ruby/template/ruby.templ"
+  } ]
+}
