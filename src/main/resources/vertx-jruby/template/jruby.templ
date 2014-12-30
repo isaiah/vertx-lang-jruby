@@ -38,14 +38,14 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
                 paramName;
             }
         } else if(rt == CLASS_API) {
-            return "new " + rubyCounterPart(rtn) + "(context.runtime, metaClass, " + paramName + ")";
+            return "new " + rubyCounterPart(eventType.name) + "(context.runtime, metaClass, " + paramName + ")";
         }else if(rt == CLASS_STRING) {
             "context.runtime.newString(" + paramName + ")";
         } else if (rt == CLASS_MAP) {
             mapType = eventType.args[1];
-            "context.runtime.newHash((Map<IRubyObject, IRubyObject>)" + paramName + ".entrySet().stream().collect(java.util.stream.Collectors.toMap(e -> context.runtime.newString(e.getKey()), e -> " + boxParam(mapType, "e.getValue()") + ")))";
+            "context.runtime.newHash((Map<IRubyObject, IRubyObject>)(" + paramName + ".entrySet().stream().collect(java.util.stream.Collectors.toMap(e -> context.runtime.newString(e.getKey()), e -> " + boxParam(mapType, "e.getValue()") + "))))";
         } else if (rt == CLASS_JSON_OBJECT) {
-            "org.jruby.runtime.Helpers.invoke(context, \"JSON\", \"parse\", context.runtime.newString(" + paramName + ".toString()))"
+            "org.jruby.runtime.Helpers.invoke(context, context.runtime.getModule(\"JSON\"), \"parse\", context.runtime.newString(" + paramName + ".toString()))"
         } else if (rtn == "Throwable") {
             return "new org.jruby.NativeException(context.runtime, context.runtime.getNativeException(), " + paramName + ")";
         }else{
@@ -286,7 +286,7 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
       RubyModule mVertx = runtime.getModule("Vertx");\n
       RubyClass c@{constructor} = mVertx.defineClassUnder("@{constructor}", runtime.getObject(), new ObjectAllocator() {\n
         @Override\n
-        public RubyClass allocate(Ruby runtime, RubyClass klazz) {\n
+        public IRubyObject allocate(Ruby runtime, RubyClass klazz) {\n
           return new Ruby@{constructor}(runtime, klazz);\n
         }\n
       });\n
@@ -297,7 +297,7 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
     }\n
 
     @comment{"Internal constructor"}
-    protected Ruby@{constructor}(Ruby runtime, RubyClass klazz, @{constructor} delegate) {\n
+    public Ruby@{constructor}(Ruby runtime, RubyClass klazz, @{constructor} delegate) {\n
       super(runtime, klazz);\n
       this.delegate = delegate;\n
     }\n
@@ -305,7 +305,6 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
     @comment{"Generate ruby initializers"}
     @JRubyMethod(rest=true)\n
     public IRubyObject initialize(ThreadContext context, IRubyObject[] args) {\n
-      this.delegate = new @{constructor}(args);\n
       return this;\n
     }\n
 
