@@ -26,7 +26,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     constructor = ifaceSimpleName;
     def boxParam(eventType, paramName) {
         rt = eventType.kind;
-        rtn = eventType.name;
+        rtn = eventType.simpleName;
         if(isPriv(rt)) {
             if(rtn == "int" || rtn == "Integer" || rtn == "long" || rtn == "Long") {
                 "context.runtime.newFixnum(" + paramName + ")";
@@ -47,7 +47,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         } else if (rt == CLASS_JSON_OBJECT) {
             "org.jruby.runtime.Helpers.invoke(context, \"JSON\", \"parse\", context.runtime.newString(" + paramName + ".toString()))"
         } else if (rtn == "Throwable") {
-            return "new NativeException(context.runtime, context.runtime.getNativeException(), " + paramName + ")";
+            return "new org.jruby.NativeException(context.runtime, context.runtime.getNativeException(), " + paramName + ")";
         }else{
             paramName;
         }
