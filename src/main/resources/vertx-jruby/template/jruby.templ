@@ -24,13 +24,32 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 
 @code{
     constructor = ifaceSimpleName;
-    def wrapInRuby(paramType) {
-        if (paramType.kind == CLASS_API) {
-            return "new " + rubyCounterPart(paramType.erased.name) + "(context.runtime, metaClass, event)";
-        } else if (paramType.simpleName == "Throwable") {
-            return "context.runtime.newRaiseException(event)";
-        } else {
-            return "event";
+    def boxParam(eventType, paramName) {
+        rt = eventType.kind;
+        rtn = eventType.name;
+        if(isPriv(rt)) {
+            if(rtn == "int" || rtn == "Integer" || rtn == "long" || rtn == "Long") {
+                "context.runtime.newFixnum(" + paramName + ")";
+            }else if (rtn == "float" || rtn == "Float" || rtn == "double" || rtn == "Double") {
+                "context.runtime.newFloat(" + paramName + ")";
+            }else if (rtn == "boolean" || rtn == "Boolean") {
+                "context.runtime.newBoolean(" + paramName + ")";
+            }else{
+                paramName;
+            }
+        } else if(rt == CLASS_API) {
+            return "new " + rubyCounterPart(rtn) + "(context.runtime, metaClass, " + paramName + ")";
+        }else if(rt == CLASS_STRING) {
+            "context.runtime.newString(" + paramName + ")";
+        } else if (rt == CLASS_MAP) {
+            mapType = eventType.args[1];
+            "context.runtime.newHash((Map<IRubyObject, IRubyObject>)" + paramName + ".entrySet().stream().collect(java.util.stream.Collectors.toMap(e -> context.runtime.newString(e.getKey()), e -> " + boxParam(mapType, "e.getValue()") + ")))";
+        } else if (rt == CLASS_JSON_OBJECT) {
+            "org.jruby.runtime.Helpers.invoke(context, \"JSON\", \"parse\", context.runtime.newString(" + paramName + ".toString()))"
+        } else if (rtn == "Throwable") {
+            return "new NativeException(context.runtime, context.runtime.getNativeException(), " + paramName + ")";
+        }else{
+            paramName;
         }
     }
     def rubyCounterPart(name) {
@@ -54,7 +73,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             }
         }
         for (m : methodList) {
-            if (m.kind == METHOD_HANDLER) {
+            if (m.kind == METHOD_HANDLER || m.kind == METHOD_FUTURE) {
                 ret.add("Block block");
                 return ret;
             }
@@ -103,15 +122,15 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     }
 }
 
-@declare{'jrubyanno'}
-@@JRubyMethod(@foreach{field : f}@{field.key}=@{quote(field.value)}@end{', '})\n
+@declare{"jrubyanno"}
+    @@JRubyMethod(@foreach{field : f}@{field.key}=@{quote(field.value)}@end{', '})\n
 @end{}
 
-@declare{'jrubyParams'}
-@foreach{field : methodParam(m)}@{field}@end{', '}
+@declare{"jrubyParams"}
+    @foreach{field : methodParam(m)}@{field}@end{', '}
 @end{}
 
-@declare{'unboxParam'}
+@declare{"unboxParam"}
     @code{
         pt = param.type.kind;
         ptn = param.type.name;
@@ -125,16 +144,21 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             RubyNumeric.num2int(@{pn})
         @else{ptn == 'long' || ptn == 'Long'}
             RubyNumeric.num2long(@{pn})
+        @else{ptn == "boolean" || ptn == "Boolean"}
+            @{param.name}.isTrue()
         @else{}
             @{param.name}.asJavaString()
         @end{}
+    @else{pt == CLASS_STRING}
+        @{pn}.asJavaString()
     @else{pt == CLASS_API}
-        @{pn}.getDelegate()
+        ((@{rubyCounterPart(ptn)}) @{pn}).getDelegate()
     @else{pt == CLASS_HANDLER}
         @code{eventType = param.type.args[0]}
         new Handler<@{eventType.erased.name}>() {\n
+            @@Override\n
             public void handle(@{eventType.erased.name} event) {\n
-                block.yield(context, @{wrapInRuby(eventType)});\n
+                @includeNamed{"yield"; eventType=eventType}
             }\n
         }\n
     @else{}
@@ -155,11 +179,21 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     @if{isPriv(t.kind)}
         @if{pn == "int" || pn == "Integer" || pn == "float" || pn == "Float"}
             RubyFixnum
+        @else{pn == "boolean" ||  pn == "Boolean"}
+            RubyBoolean
         @else{}
             RubyString
         @end{}
-    @else{}
+    @else{t.kind == CLASS_API}
+        @{rubyCounterPart(pn)}
+    @else{t.kind == CLASS_STRING}
         RubyString
+    @else{t.kind == CLASS_JSON_OBJECT || t.kind == CLASS_MAP}
+        RubyHash
+    @else{t.kind == CLASS_SET || t.kind == CLASS_LIST}
+        RubyArray
+    @else{}
+        RubyHash
     @end{}
 @end{}
 
@@ -193,24 +227,20 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 @end{}
 
 @declare{'boxRet'}
-    return 
     @code{rt = method.returnType.kind; rtn = method.returnType.simpleName}
-    @if{isPriv(rt)}
-        @if{rtn == 'int' || rtn == 'Integer' || rtn == 'long' || rtn == 'Long'}
-            context.runtime.newFixnum(ret)
-        @else{rtn == 'float' || rtn == 'Float' || rtn == 'double' || rtn == 'Double'}
-            context.runtime.newFloat(ret)
-        @else{}
-            ret
-        @end{}
-    @else{rt == CLASS_API}
-        new Ruby@{rtn}(context.runtime, metaClass, ret)
-    @else{rt == CLASS_STRING}
-        context.runtime.newString(ret)
+    return @{boxParam(method.returnType, "ret")};\n
+@end{}
+
+@declare{"yield"}
+    @if{eventType.kind == CLASS_VOID}
+        block.yieldSpecific(context);\n
+    @else{eventType.kind == CLASS_ASYNC_RESULT}
+        if (event.succeeded()) {\n
+            block.yieldSpecific(context, @{boxParam(eventType.args[0], "event.result()")});\n
+        }\n
     @else{}
-        ret
+        block.yieldSpecific(context, @{boxParam(eventType, "event")});
     @end{}
-    ;\n
 @end{}
 
 import org.jruby.Ruby;\n
@@ -227,6 +257,8 @@ import org.jruby.RubyNumeric;\n
 import org.jruby.RubyString;\n
 import org.jruby.RubyHash;\n
 import org.jruby.RubyArray;\n
+import org.jruby.RubyFixnum;\n
+import org.jruby.RubyFloat;\n
 \n
 import @{ifacePackageName}.@{ifaceSimpleName};\n
 @comment{"Generate the imports"}
@@ -301,7 +333,7 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
         @else{method.returnType.name.equals("void")}
             return context.runtime.getNil();\n
         @else{}
-            @includeNamed{"boxRet";m=method}
+            @includeNamed{"boxRet"}
         @end{}
     }\n
 @end{}
