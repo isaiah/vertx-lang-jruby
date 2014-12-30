@@ -24,6 +24,18 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 
 @code{
     constructor = ifaceSimpleName;
+    def wrapInRuby(paramType) {
+        if (paramType.kind == CLASS_API) {
+            return "new " + rubyCounterPart(paramType.erased.name) + "(context.runtime, metaClass, event)";
+        } else if (paramType.simpleName == "Throwable") {
+            return "context.runtime.newRaiseException(event)";
+        } else {
+            return "event";
+        }
+    }
+    def rubyCounterPart(name) {
+        name.replace("io.vertx.", "io.vertx.jruby.").replaceAll("\\.([A-Z])", ".Ruby$1");
+    }
     def methodParam(m) {
         methodList = methodsByName.get(m);
         ret = new java.util.LinkedHashSet();
@@ -36,7 +48,15 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             ret.add("IRubyObject[] args");
         } else {
             for (p : methodList.get(0).params) {
-                ret.add("IRubyObject " + p.name);
+                if (p.type != CLASS_HANDLER) {
+                    ret.add("IRubyObject " + p.name);
+                }
+            }
+        }
+        for (m : methodList) {
+            if (m.kind == METHOD_HANDLER) {
+                ret.add("Block block");
+                return ret;
             }
         }
         ret;
@@ -108,6 +128,15 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         @else{}
             @{param.name}.asJavaString()
         @end{}
+    @else{pt == CLASS_API}
+        @{pn}.getDelegate()
+    @else{pt == CLASS_HANDLER}
+        @code{eventType = param.type.args[0]}
+        new Handler<@{eventType.erased.name}>() {\n
+            public void handle(@{eventType.erased.name} event) {\n
+                block.yield(context, @{wrapInRuby(eventType)});\n
+            }\n
+        }\n
     @else{}
         @{pn}
     @end{}
@@ -134,9 +163,16 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     @end{}
 @end{}
 
+@declare{"genMethodCall"}
+    @if{!method.fluent && !method.returnType.name.equals("void")}
+        ret = 
+    @end{}
+    @if{st}@{type.raw}@else{}this.delegate@end{}.@{method.name}
+@end{}
+
 @declare{"invokeDelegate"}
     @if{methodEntry.getValue().size() == 1}
-        @if{st}@{type.raw}@else{}this.delegate@end{}.@{method.name}(@includeNamed{'unboxParams'; params=method.params; overload=false});\n
+        @includeNamed{"genMethodCall"}(@includeNamed{"unboxParams"; params=method.params; overload=false});\n
     @else{}
         @foreach{method: methodEntry.getValue()}
             @if{method.params.size() > 0}
@@ -147,10 +183,10 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
                     @code{i++}
                 @end{" && "}
                 ) {\n
-                    @if{st}@{type.raw}@else{}this.delegate@end{}.@{method.name}(@includeNamed{'unboxParams'; params=method.params; overload=true});\n
+                    @includeNamed{"genMethodCall"}(@includeNamed{'unboxParams'; params=method.params; overload=true});\n
                 }\n
             @else{}
-                @if{st}@{type.raw}@else{}this.delegate@end{}.@{method.name}();\n
+                @includeNamed{"genMethodCall"}();\n
             @end{}
         @end{}
     @end{}
@@ -164,13 +200,13 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             context.runtime.newFixnum(ret)
         @else{rtn == 'float' || rtn == 'Float' || rtn == 'double' || rtn == 'Double'}
             context.runtime.newFloat(ret)
-        @else{rtn == 'String'}
-            context.runtime.newString(ret)
         @else{}
             ret
         @end{}
     @else{rt == CLASS_API}
         new Ruby@{rtn}(context.runtime, metaClass, ret)
+    @else{rt == CLASS_STRING}
+        context.runtime.newString(ret)
     @else{}
         ret
     @end{}
@@ -185,19 +221,23 @@ import org.jruby.anno.JRubyClass;\n
 import org.jruby.anno.JRubyMethod;\n
 import org.jruby.runtime.ObjectAllocator;\n
 import org.jruby.runtime.ThreadContext;\n
+import org.jruby.runtime.Block;\n
 import org.jruby.runtime.builtin.IRubyObject;\n
+import org.jruby.RubyNumeric;\n
+import org.jruby.RubyString;\n
+import org.jruby.RubyHash;\n
+import org.jruby.RubyArray;\n
 \n
 import @{ifacePackageName}.@{ifaceSimpleName};\n
 @comment{"Generate the imports"}
 @foreach{importedType:importedTypes}
     @if{importedType.kind == CLASS_API}
         @if{!ifacePackageName.equals(importedType.packageName)}
-import @{importedType.toString().replace("io.vertx.", "io.vertx.jruby.")};\n
+import @{rubyCounterPart(importedType.toString())};\n
         @end{}
-    @else{}
-        @if{!importedType.packageName.equals("java.lang")}
+    @end{}
+    @if{!importedType.packageName.equals("java.lang")}
 import @{importedType};\n
-        @end{}
     @end{}
 @end{}
 
@@ -218,7 +258,7 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
           return new Ruby@{constructor}(runtime, klazz);\n
         }\n
       });\n
-      c@{constructor}.defineAnnotatedMethod(Ruby@{constructor}.class);\n
+      c@{constructor}.defineAnnotatedMethods(Ruby@{constructor}.class);\n
     }\n
     public Ruby@{constructor}(Ruby runtime, RubyClass klazz) {\n
       super(runtime, klazz);\n
@@ -237,7 +277,7 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
       return this;\n
     }\n
 
-    public @{constructor} get@{constructor}() {\n
+    public @{constructor} getDelegate() {\n
       return delegate;\n
     }\n
 
@@ -251,7 +291,7 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
         @comment{"method invoke"}
         @if{!method.fluent && ! method.returnType.name.equals("void")}
             @{method.returnType.simpleName} ret;\n
-            ret = @includeNamed{"invokeDelegate"; methodEntry=methodEntry;overload=false}
+            @includeNamed{"invokeDelegate"; methodEntry=methodEntry;overload=false}
         @else{}
             @includeNamed{"invokeDelegate"; methodEntry=methodEntry}
         @end{}

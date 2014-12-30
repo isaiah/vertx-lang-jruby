@@ -85,6 +85,11 @@
       <version>2.2.0.Final</version>
       <scope>provided</scope>
     </dependency>
+    <dependency>
+      <groupId>org.jruby</groupId>
+      <artifactId>jruby-complete</artifactId>
+      <version>1.7.13</version>
+    </dependency>
 
     <!-- Test dependencies -->
     <dependency>
