@@ -63,7 +63,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             }
         } else if (pt == CLASS_API) {
             return rubyCounterPart(pn);
-        } else if (pt == CLASS_STRING) {
+        } else if (pt == CLASS_ENUM || pt == CLASS_STRING) {
             return "RubyString";
         } else if (pt == CLASS_JSON_OBJECT || pt == CLASS_MAP || pt == CLASS_OPTIONS) {
             return "RubyHash";
@@ -240,6 +240,8 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         @end{}
     @else{pt == CLASS_STRING}
         @{pn}.asJavaString()
+    @else{pt == CLASS_ENUM}
+        @{ptn}.valueOf(@{pn})
     @else{pt == CLASS_API}
         ((@{rubyCounterPart(ptn)}) @{pn}).getDelegate()
     @else{pt == CLASS_OPTIONS}
