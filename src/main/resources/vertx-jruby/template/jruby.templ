@@ -24,11 +24,78 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 
 @code{
     constructor = ifaceSimpleName;
+
+    def groupByArity(methods) {
+        ret = new java.util.HashMap();
+        for(method : methods) {
+            argc = method.params.size();
+            if (isHandler(method)) {
+                argc = argc - 1;
+            }
+            group = ret.get(argc);
+            firstMethod = null;
+            if (group == null) {
+                group = new java.util.ArrayList();
+            } else {
+                firstMethod = group.get(0);
+            }
+            if (isHandler(method) && firstMethod != null) {
+                group.set(0, method);
+                group.add(firstMethod);
+            } else {
+                group.add(method);
+            }
+            ret.put(argc, group);
+        }
+        ret;
+    }
+
+    def typeMapping(paramType) {
+        pt = paramType.kind;
+        pn = paramType.name;
+        if(isPriv(pt)) {
+            if (pn == "int" || pn == "Integer" || pn == "float" || pn == "Float") {
+                return "RubyFixnum";
+            } else if(pn == "boolean" ||  pn == "Boolean") {
+                return "RubyBoolean";
+            } else {
+                return "RubyString";
+            }
+        } else if (pt == CLASS_API) {
+            return rubyCounterPart(pn);
+        } else if (pt == CLASS_STRING) {
+            return "RubyString";
+        } else if (pt == CLASS_JSON_OBJECT || pt == CLASS_MAP || pt == CLASS_OPTIONS) {
+            return "RubyHash";
+        } else if (pt == CLASS_SET || pt == CLASS_LIST) {
+            return "RubyArray";
+        } else {
+            return "RubyHash";
+        }
+    }
+
+    def arityCheck(params) {
+        ret = new java.util.ArrayList();
+
+        i = 0;
+        for(param : params) {
+            pt = param.type.kind;
+            if (pt == CLASS_HANDLER) {
+                ret.add("block.isGiven()");
+            }
+            if (pt != CLASS_OBJECT && pt != CLASS_HANDLER) {
+                ret.add("args[" + i + "] instanceof " + typeMapping(param.type));
+            }
+            i = i + 1;
+        }
+        return ret;
+    }
+
     def boxParam(eventType, paramName) {
         rt = eventType.kind;
         rtn = eventType.simpleName;
         if(isPriv(rt)) {
-            if(rtn == "int" || rtn == "Integer" || rtn == "long" || rtn == "Long") {
+            if(rtn == "int" || rtn == "Integer" || rtn == "long" || rtn == "Long" || rtn == "short" || rtn == "byte") {
                 "context.runtime.newFixnum(" + paramName + ")";
             }else if (rtn == "float" || rtn == "Float" || rtn == "double" || rtn == "Double") {
                 "context.runtime.newFloat(" + paramName + ")";
@@ -43,7 +110,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             "context.runtime.newString(" + paramName + ")";
         } else if (rt == CLASS_MAP) {
             mapType = eventType.args[1];
-            "context.runtime.newHash((Map<IRubyObject, IRubyObject>)(" + paramName + ".entrySet().stream().collect(java.util.stream.Collectors.toMap(e -> context.runtime.newString(e.getKey()), e -> " + boxParam(mapType, "e.getValue()") + "))))";
+            "RubyHash.newHash(context.runtime, " + paramName + ".entrySet().stream().collect(java.util.stream.Collectors.toMap(e -> context.runtime.newString(e.getKey()), e -> " + boxParam(mapType, "e.getValue()") + ")), context.runtime.getNil())";
         } else if (rt == CLASS_JSON_OBJECT) {
             "org.jruby.runtime.Helpers.invoke(context, context.runtime.getModule(\"JSON\"), \"parse\", context.runtime.newString(" + paramName + ".toString()))"
         } else if (rtn == "Throwable") {
@@ -73,7 +140,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             }
         }
         for (m : methodList) {
-            if (m.kind == METHOD_HANDLER || m.kind == METHOD_FUTURE) {
+            if (isHandler(m)) {
                 ret.add("Block block");
                 return ret;
             }
@@ -85,15 +152,20 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         overload = methodList.size() > 1;
         ret = new java.util.HashMap();
         maxParamLength = 0;
-        minParamLength = 0;
         for(method : methodList) {
-            if (maxParamLength < method.params.size()) {
-                maxParamLength = method.params.size();
-            }
-            if (minParamLength > method.params.size()) {
-                minParamLength = method.params.size();
+            paramSize = isHandler(method) ? method.params.size() - 1 : method.params.size();
+            if (maxParamLength < paramSize) {
+                maxParamLength = paramSize;
             }
         }
+        minParamLength = maxParamLength;
+        for(method : methodList) {
+            paramSize = isHandler(method) ? method.params.size() - 1 : method.params.size();
+            if (minParamLength > paramSize) {
+                minParamLength = paramSize;
+            }
+        }
+
         required = minParamLength;
         optional = maxParamLength - required;
         ret["name"] = helper.convertCamelCaseToUnderscores(name);
@@ -118,7 +190,16 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         }
     }
     def isPriv(kind) {
-        kind == CLASS_PRIMITIVE || kind == CLASS_BOXED_PRIMITIVE
+        kind == CLASS_PRIMITIVE || kind == CLASS_BOXED_PRIMITIVE;
+    }
+    def isHandler(method) {
+        paramSize = method.params.size();
+        if (paramSize == 0) {
+            false;
+        } else {
+            lastParam = method.params[paramSize - 1].type.kind;
+            lastParam == CLASS_HANDLER || lastParam == CLASS_ASYNC_RESULT;
+        }
     }
 }
 
@@ -142,10 +223,18 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     @if{isPriv(pt)}
         @if{ptn == 'int' || ptn == 'Integer'}
             RubyNumeric.num2int(@{pn})
+        @else{ptn == 'short'}
+            (short) RubyNumeric.num2int(@{pn})
+        @else{ptn == 'byte'}
+            (byte) RubyNumeric.num2int(@{pn})
         @else{ptn == 'long' || ptn == 'Long'}
             RubyNumeric.num2long(@{pn})
         @else{ptn == "boolean" || ptn == "Boolean"}
             @{param.name}.isTrue()
+        @else{ptn == "double" || ptn == "Double"}
+            RubyNumeric.num2dbl(@{pn})
+        @else{ptn == "float" || ptn == "Float"}
+            (float) RubyNumeric.num2dbl(@{pn})
         @else{}
             @{param.name}.asJavaString()
         @end{}
@@ -153,6 +242,8 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         @{pn}.asJavaString()
     @else{pt == CLASS_API}
         ((@{rubyCounterPart(ptn)}) @{pn}).getDelegate()
+    @else{pt == CLASS_OPTIONS}
+        new @{ptn}(new JsonObject(org.jruby.runtime.Helpers.invoke(context, context.runtime.getModule("JSON"), "dump", @{pn}).asJavaString()))
     @else{pt == CLASS_HANDLER}
         @code{eventType = param.type.args[0]}
         new Handler<@{eventType.erased.name}>() {\n
@@ -174,29 +265,6 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     @end{", "}
 @end{}
 
-@declare{"typeMapping"}
-    @code{pt = t.kind; pn = t.name}
-    @if{isPriv(t.kind)}
-        @if{pn == "int" || pn == "Integer" || pn == "float" || pn == "Float"}
-            RubyFixnum
-        @else{pn == "boolean" ||  pn == "Boolean"}
-            RubyBoolean
-        @else{}
-            RubyString
-        @end{}
-    @else{t.kind == CLASS_API}
-        @{rubyCounterPart(pn)}
-    @else{t.kind == CLASS_STRING}
-        RubyString
-    @else{t.kind == CLASS_JSON_OBJECT || t.kind == CLASS_MAP}
-        RubyHash
-    @else{t.kind == CLASS_SET || t.kind == CLASS_LIST}
-        RubyArray
-    @else{}
-        RubyHash
-    @end{}
-@end{}
-
 @declare{"genMethodCall"}
     @if{!method.fluent && !method.returnType.name.equals("void")}
         ret = 
@@ -208,16 +276,26 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     @if{methodEntry.getValue().size() == 1}
         @includeNamed{"genMethodCall"}(@includeNamed{"unboxParams"; params=method.params; overload=false});\n
     @else{}
-        @foreach{method: methodEntry.getValue()}
-            @if{method.params.size() > 0}
-                @code{i = 0}
-                if (
-                @foreach{param : method.params}
-                    args[@{i}] instanceof @includeNamed{"typeMapping"; t=method.params[i].type}
-                    @code{i++}
-                @end{" && "}
-                ) {\n
-                    @includeNamed{"genMethodCall"}(@includeNamed{'unboxParams'; params=method.params; overload=true});\n
+        @foreach{methodGroup: groupByArity(methodEntry.getValue()).entrySet()}
+            @code{arity = methodGroup.getKey()}
+            @if{arity > 0}
+                if (args.length == @{arity}) {\n
+                    @foreach{method : methodGroup.getValue()}
+                        @code{guards = arityCheck(method.params)}
+                        @if{guards.size() > 0}
+                        if (
+                        @foreach{ guard: guards }
+                            @{guard}
+                        @end{" && "}
+                        ) {\n
+                        @else{methodGroup.getValue().size() > 1}
+                            else {\n
+                        @end{}
+                            @includeNamed{"genMethodCall"}(@includeNamed{'unboxParams'; params=method.params; overload=true});\n
+                        @if{guards.size() > 0 || methodGroup.getValue().size() > 1}
+                        }\n
+                        @end{}
+                    @end{}
                 }\n
             @else{}
                 @includeNamed{"genMethodCall"}();\n
