@@ -62,7 +62,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
                 return "RubyString";
             }
         } else if (pt == CLASS_API) {
-            return rubyCounterPart(pn);
+            return rubyCounterPart(paramType.simpleName);
         } else if (pt == CLASS_ENUM || pt == CLASS_STRING) {
             return "RubyString";
         } else if (pt == CLASS_JSON_OBJECT || pt == CLASS_MAP || pt == CLASS_OPTIONS) {
@@ -105,14 +105,20 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
                 paramName;
             }
         } else if(rt == CLASS_API) {
-            return "new " + rubyCounterPart(eventType.name) + "(context.runtime, metaClass, " + paramName + ")";
+            return "new " + rubyCounterPart(eventType.simpleName) + "(context.runtime, (RubyClass) context.runtime.getClassFromPath(\"Vertx::" + eventType.simpleName.replaceAll("<[A-Z]>", "") + "\"), " + paramName + ")";
         }else if(rt == CLASS_STRING) {
             "context.runtime.newString(" + paramName + ")";
+        } else if (rt == CLASS_LIST || rt == CLASS_SET) {
+            "RubyArray.newArray(context.runtime, (IRubyObject[]) " + paramName + ".stream().map(e -> " + boxParam(eventType.args[0], "e") + ").collect(java.util.ArrayList<IRubyObject>::new, java.util.ArrayList<IRubyObject>::add, java.util.ArrayList<IRubyObject>::addAll).toArray())"
         } else if (rt == CLASS_MAP) {
             mapType = eventType.args[1];
             "RubyHash.newHash(context.runtime, " + paramName + ".entrySet().stream().collect(java.util.stream.Collectors.toMap(e -> context.runtime.newString(e.getKey()), e -> " + boxParam(mapType, "e.getValue()") + ")), context.runtime.getNil())";
         } else if (rt == CLASS_JSON_OBJECT) {
             "org.jruby.runtime.Helpers.invoke(context, context.runtime.getModule(\"JSON\"), \"parse\", context.runtime.newString(" + paramName + ".toString()))"
+        } else if (rt == CLASS_OBJECT) {
+            "(IRubyObject) " + paramName
+        } else if (rt == CLASS_ENUM) {
+          "context.runtime.newString(" + paramName + ".name)"
         } else if (rtn == "Throwable") {
             return "new org.jruby.NativeException(context.runtime, context.runtime.getNativeException(), " + paramName + ")";
         }else{
@@ -120,7 +126,13 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         }
     }
     def rubyCounterPart(name) {
-        name.replace("io.vertx.", "io.vertx.jruby.").replaceAll("\\.([A-Z])", ".Ruby$1");
+        ret = name;
+        if (name.startsWith("io")) {
+          ret = name.replace("io.vertx.", "io.vertx.jruby.").replaceAll("\\.([A-Z])", ".Ruby$1");
+        } else {
+          ret = "Ruby" + name;
+        }
+        ret.replaceAll("<[A-Z]>", "");
     }
     def methodParam(m) {
         methodList = methodsByName.get(m);
@@ -241,11 +253,11 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     @else{pt == CLASS_STRING}
         @{pn}.asJavaString()
     @else{pt == CLASS_ENUM}
-        @{ptn}.valueOf(@{pn})
+        @{ptn}.valueOf(@{pn}.asJavaString())
     @else{pt == CLASS_API}
         ((@{rubyCounterPart(ptn)}) @{pn}).getDelegate()
     @else{pt == CLASS_OPTIONS}
-        new @{ptn}(new JsonObject(org.jruby.runtime.Helpers.invoke(context, context.runtime.getModule("JSON"), "dump", @{pn}).asJavaString()))
+        new @{ptn}(new io.vertx.core.json.JsonObject(org.jruby.runtime.Helpers.invoke(context, context.runtime.getModule("JSON"), "dump", @{pn}).asJavaString()))
     @else{pt == CLASS_HANDLER}
         @code{eventType = param.type.args[0]}
         new Handler<@{eventType.erased.name}>() {\n
@@ -307,7 +319,6 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 @end{}
 
 @declare{'boxRet'}
-    @code{rt = method.returnType.kind; rtn = method.returnType.simpleName}
     return @{boxParam(method.returnType, "ret")};\n
 @end{}
 
@@ -316,7 +327,11 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         block.yieldSpecific(context);\n
     @else{eventType.kind == CLASS_ASYNC_RESULT}
         if (event.succeeded()) {\n
-            block.yieldSpecific(context, @{boxParam(eventType.args[0], "event.result()")});\n
+            @if{eventType.args[0].kind == CLASS_VOID}
+              block.yieldSpecific(context);\n
+            @else{}
+              block.yieldSpecific(context, @{boxParam(eventType.args[0], "event.result()")});\n
+            @end{}
         }\n
     @else{}
         block.yieldSpecific(context, @{boxParam(eventType, "event")});
@@ -359,7 +374,7 @@ import @{importedType};\n
  */\n
 @end{}
 @JRubyClass(name = "@{ifaceSimpleName}")\n
-public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
+public class Ruby@{ifaceSimpleName} extends RubyObject {\n
     private @{type.raw} delegate;\n
     @comment{"JRuby hooks"}
     public static void createRuby@{constructor}(final Ruby runtime) {\n
@@ -401,7 +416,11 @@ public class Ruby@{helper.getSimpleName(ifaceFQCN)} extends RubyObject {\n
 ) {\n
         @comment{"method invoke"}
         @if{!method.fluent && ! method.returnType.name.equals("void")}
-            @{method.returnType.simpleName} ret;\n
+            @if{isPriv(method.returnType.kind)}
+              @{method.returnType.erased.simpleName} ret;\n
+            @else{}
+              @{method.returnType.erased.simpleName} ret = null;\n
+            @end{}
             @includeNamed{"invokeDelegate"; methodEntry=methodEntry;overload=false}
         @else{}
             @includeNamed{"invokeDelegate"; methodEntry=methodEntry}
