@@ -203,7 +203,6 @@
               </systemProperties>
               <processors>
                 <processor>io.vertx.codegen.CodeGenProcessor</processor>
-                <processor>io.vertx.docgen.DocGenProcessor</processor>
               </processors>
               <optionMap>
                 <generators>jruby</generators>
@@ -214,25 +213,6 @@
             </configuration>
           </execution>
           <!-- Run the annotation processor on codegen and generate the codegen API -->
-          <execution>
-            <id>generate-codegen</id>
-            <goals>
-              <goal>process</goal>
-            </goals>
-            <phase>generate-test-sources</phase>
-            <configuration>
-              <systemProperties>
-                <java.util.logging.SimpleFormatter.format>%4$s: %3$s - %5$s %6$s%n</java.util.logging.SimpleFormatter.format>
-              </systemProperties>
-              <processors>
-                <processor>io.vertx.codegen.CodeGenProcessor</processor>
-              </processors>
-              <optionMap>
-                <outputDirectory>${project.basedir}/src/test/</outputDirectory>
-              </optionMap>
-              <sourceDirectory>${project.build.directory}/sources/codegen</sourceDirectory>
-            </configuration>
-          </execution>
         </executions>
         <dependencies>
           <dependency>

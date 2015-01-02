@@ -1,5 +1,5 @@
 {
-  "name": "JRuby",
+  "name": "ruby",
   "generators": [ {
     "kind": "class",
     "fileName": "fqn.replace('io.vertx', 'io.vertx.jruby').replace('.', '/').replaceAll('/([A-Z])', '/Ruby$1').replace('/', '.') + '.java'",

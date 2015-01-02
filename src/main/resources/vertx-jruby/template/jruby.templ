@@ -118,7 +118,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         } else if (rt == CLASS_OBJECT) {
             "(IRubyObject) " + paramName
         } else if (rt == CLASS_ENUM) {
-          "context.runtime.newString(" + paramName + ".name)"
+          "context.runtime.newString(" + paramName + ".name())"
         } else if (rtn == "Throwable") {
             return "new org.jruby.NativeException(context.runtime, context.runtime.getNativeException(), " + paramName + ")";
         }else{
@@ -132,7 +132,7 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         } else {
           ret = "Ruby" + name;
         }
-        ret.replaceAll("<[A-Z]>", "");
+        ret.replaceAll("<[A-Z](,[A-Z])*>", "");
     }
     def methodParam(m) {
         methodList = methodsByName.get(m);
@@ -141,8 +141,10 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         if (st) {
             ret.add("IRubyObject recv");
         }
+        arityMap = groupByArity(methodList);
         overload = methodList.size() > 1;
-        if (overload) {
+        hasNoArg = overload && arityMap.size() == 1 && arityMap.containsKey(0);
+        if (overload && !hasNoArg) {
             ret.add("IRubyObject[] args");
         } else {
             for (p : methodList.get(0).params) {

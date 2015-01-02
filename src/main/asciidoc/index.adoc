@@ -1,8 +1,0 @@
-= Vert.x reference manual
-:toc: right
-
-= Vert.x API manual
-
-== Flow Control - Streams and Pumps
-
-include::io.vertx.core.streams.adoc[]
