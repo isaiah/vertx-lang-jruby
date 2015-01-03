@@ -26,26 +26,23 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     constructor = ifaceSimpleName;
 
     def groupByArity(methods) {
-        ret = new java.util.HashMap();
+        ret = new java.util.TreeMap();
         for(method : methods) {
             argc = method.params.size();
             if (isHandler(method)) {
                 argc = argc - 1;
             }
             group = ret.get(argc);
-            firstMethod = null;
             if (group == null) {
                 group = new java.util.ArrayList();
-            } else {
-                firstMethod = group.get(0);
+                ret.put(argc, group);
             }
-            if (isHandler(method) && firstMethod != null) {
+            if (isHandler(method) && group.size() > 0) {
+                group.add(group.get(0));
                 group.set(0, method);
-                group.add(firstMethod);
             } else {
                 group.add(method);
             }
-            ret.put(argc, group);
         }
         ret;
     }
@@ -74,16 +71,15 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         }
     }
 
-    def arityCheck(params) {
+    def arityCheck(params, overload) {
         ret = new java.util.ArrayList();
 
         i = 0;
         for(param : params) {
             pt = param.type.kind;
-            if (pt == CLASS_HANDLER) {
+            if (pt == CLASS_HANDLER || pt == CLASS_ASYNC_RESULT) {
                 ret.add("block.isGiven()");
-            }
-            if (pt != CLASS_OBJECT && pt != CLASS_HANDLER) {
+            } else if (overload && pt != CLASS_OBJECT) {
                 ret.add("args[" + i + "] instanceof " + typeMapping(param.type));
             }
             i = i + 1;
@@ -142,13 +138,14 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
             ret.add("IRubyObject recv");
         }
         arityMap = groupByArity(methodList);
-        overload = methodList.size() > 1;
-        hasNoArg = overload && arityMap.size() == 1 && arityMap.containsKey(0);
-        if (overload && !hasNoArg) {
+        overload = arityMap.size() > 1;
+        hasNoArg = !overload && arityMap.firstKey() == 0;
+        hasTooManyArgs = !overload && arityMap.firstKey() > 3;
+        if (overload || hasTooManyArgs) {
             ret.add("IRubyObject[] args");
-        } else {
+        } else if (!hasNoArg) {
             for (p : methodList.get(0).params) {
-                if (p.type != CLASS_HANDLER) {
+                if (p.type.kind != CLASS_HANDLER && p.type.kind != CLASS_ASYNC_RESULT) {
                     ret.add("IRubyObject " + p.name);
                 }
             }
@@ -161,10 +158,20 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         }
         ret;
     }
+    def isOverloaded(methodList) {
+        arityMap = groupByArity(methodList);
+        arityMap.size() > 1 || arityMap.firstKey() > 3;
+    }
     def methodAnno(name) {
         methodList = methodsByName.get(name);
-        overload = methodList.size() > 1;
         ret = new java.util.HashMap();
+        ret["name"] = helper.convertCamelCaseToUnderscores(name);
+        if (st) {
+            ret["meta"] = true;
+        }
+        if (!isOverloaded(methodList)) {
+          return ret.entrySet();
+        }
         maxParamLength = 0;
         for(method : methodList) {
             paramSize = isHandler(method) ? method.params.size() - 1 : method.params.size();
@@ -182,17 +189,11 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 
         required = minParamLength;
         optional = maxParamLength - required;
-        ret["name"] = helper.convertCamelCaseToUnderscores(name);
-        if (st) {
-            ret["meta"] = true;
+        if (optional != 0) {
+            ret["optional"] = optional;
         }
-        if (overload) {
-            if (optional != 0) {
-                ret["optional"] = optional;
-            }
-            if (required != 0) {
-                ret["required"] = required;
-            }
+        if (required != 0) {
+            ret["required"] = required;
         }
         ret.entrySet();
     }
@@ -218,11 +219,11 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 }
 
 @declare{"jrubyanno"}
-    @@JRubyMethod(@foreach{field : f}@{field.key}=@{quote(field.value)}@end{', '})\n
+    @@JRubyMethod(@foreach{field : f}@{field.key}=@{quote(field.value)}@end{", "})\n
 @end{}
 
 @declare{"jrubyParams"}
-    @foreach{field : methodParam(m)}@{field}@end{', '}
+    @foreach{field : methodParam(m)}@{field}@end{", "}
 @end{}
 
 @declare{"unboxParam"}
@@ -235,13 +236,13 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
         }
     }
     @if{isPriv(pt)}
-        @if{ptn == 'int' || ptn == 'Integer'}
+        @if{ptn == "int" || ptn == "Integer"}
             RubyNumeric.num2int(@{pn})
-        @else{ptn == 'short'}
+        @else{ptn == "short"}
             (short) RubyNumeric.num2int(@{pn})
-        @else{ptn == 'byte'}
+        @else{ptn == "byte"}
             (byte) RubyNumeric.num2int(@{pn})
-        @else{ptn == 'long' || ptn == 'Long'}
+        @else{ptn == "long" || ptn == "Long"}
             RubyNumeric.num2long(@{pn})
         @else{ptn == "boolean" || ptn == "Boolean"}
             @{param.name}.isTrue()
@@ -273,10 +274,10 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
     @end{}
 @end{}
 
-@declare{'unboxParams'}
-    @code{i = 0}
-    @foreach{param: params}
-        @includeNamed{'unboxParam'; p=param; overload=overload; i=i}
+@declare{"unboxParams"}
+    @code{i = 0; overload = isOverloaded(methodsByName.get(method.name))}
+    @foreach{param: method.params}
+        @includeNamed{"unboxParam"; p=param; overload=overload; i=i}
         @code{i++}
     @end{", "}
 @end{}
@@ -290,31 +291,32 @@ package @{ifacePackageName.replace("io.vertx.", "io.vertx.jruby.")};\n
 
 @declare{"invokeDelegate"}
     @if{methodEntry.getValue().size() == 1}
-        @includeNamed{"genMethodCall"}(@includeNamed{"unboxParams"; params=method.params; overload=false});\n
+        @includeNamed{"genMethodCall"}(@includeNamed{"unboxParams"; method=method});\n
     @else{}
-        @foreach{methodGroup: groupByArity(methodEntry.getValue()).entrySet()}
-            @code{arity = methodGroup.getKey()}
-            @if{arity > 0}
-                if (args.length == @{arity}) {\n
-                    @foreach{method : methodGroup.getValue()}
-                        @code{guards = arityCheck(method.params)}
-                        @if{guards.size() > 0}
-                        if (
-                        @foreach{ guard: guards }
-                            @{guard}
-                        @end{" && "}
-                        ) {\n
-                        @else{methodGroup.getValue().size() > 1}
-                            else {\n
-                        @end{}
-                            @includeNamed{"genMethodCall"}(@includeNamed{'unboxParams'; params=method.params; overload=true});\n
-                        @if{guards.size() > 0 || methodGroup.getValue().size() > 1}
-                        }\n
-                        @end{}
+        @code{methodGroups = groupByArity(methodEntry.getValue()); overload=methodGroups.size() > 1}
+        @foreach{methodGroup: methodGroups.entrySet()}
+            @code{arity = methodGroup.getKey(); hasBlock=methodGroup.getValue().size() > 1}
+            @if{overload}
+            if (args.length == @{arity}) {\n
+            @end{}
+                @foreach{method : methodGroup.getValue()}
+                    @code{guards = arityCheck(method.params, overload)}
+                    @if{guards.size() > 0}
+                    if (
+                    @foreach{ guard: guards }
+                        @{guard}
+                    @end{" && "}
+                    ) {\n
+                    @else{hasBlock}
+                        else {\n
                     @end{}
-                }\n
-            @else{}
-                @includeNamed{"genMethodCall"}();\n
+                        @includeNamed{"genMethodCall"}(@includeNamed{"unboxParams"; method=method});\n
+                    @if{guards.size() > 0 || hasBlock}
+                    }\n
+                    @end{}
+                @end{}
+            @if{overload}
+            }\n
             @end{}
         @end{}
     @end{}
@@ -412,7 +414,7 @@ public class Ruby@{ifaceSimpleName} extends RubyObject {\n
 @comment{"Generate methods"}
 @foreach{methodEntry:methodsByName.entrySet()}
     @code{method = methodEntry.getValue().get(0); st = method.staticMethod}
-    @includeNamed{'jrubyanno'; f=methodAnno(methodEntry.getKey())}
+    @includeNamed{"jrubyanno"; f=methodAnno(methodEntry.getKey())}
     public @if{st}static @end{}IRubyObject @{method.name}(
 @includeNamed{"jrubyParams"; m = methodEntry.getKey()}
 ) {\n
