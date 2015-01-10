@@ -1,5 +1,5 @@
 require_relative './test_helper'
-v = Vertx::Vertx.vertx
+v = Vertx.vertx
 s = v.create_http_server({port: 8080})
 s.request_handler do |r|
   r.end_handler do
